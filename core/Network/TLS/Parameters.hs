@@ -93,6 +93,7 @@ data ClientParams = ClientParams
       -- of 'supportedCiphers' with a suitable cipherlist.
     , clientSupported                 :: Supported
     , clientDebug                     :: DebugParams
+    , client0RTTData                  :: Maybe ByteString
     } deriving (Show)
 
 defaultParamsClient :: HostName -> ByteString -> ClientParams
@@ -105,6 +106,7 @@ defaultParamsClient serverName serverId = ClientParams
     , clientHooks                = def
     , clientSupported            = def
     , clientDebug                = defaultDebugParams
+    , client0RTTData             = Nothing
     }
 
 data ServerParams = ServerParams
@@ -124,6 +126,7 @@ data ServerParams = ServerParams
     , serverHooks             :: ServerHooks
     , serverSupported         :: Supported
     , serverDebug             :: DebugParams
+    , serverAccept0RTT        :: Bool
     } deriving (Show)
 
 defaultParamsServer :: ServerParams
@@ -135,6 +138,7 @@ defaultParamsServer = ServerParams
     , serverShared           = def
     , serverSupported        = def
     , serverDebug            = defaultDebugParams
+    , serverAccept0RTT       = False
     }
 
 instance Default ServerParams where
@@ -198,7 +202,10 @@ defaultSupported = Supported
     { supportedVersions       = [TLS12,TLS11,TLS10]
     , supportedCiphers        = []
     , supportedCompressions   = [nullCompression]
-    , supportedHashSignatures = [ (Struct.HashSHA512, SignatureRSA)
+    , supportedHashSignatures = [ (HashIntrinsic,     SignatureRSApssSHA256)
+                                , (HashIntrinsic,     SignatureRSApssSHA384)
+                                , (HashIntrinsic,     SignatureRSApssSHA512)
+                                , (Struct.HashSHA512, SignatureRSA)
                                 , (Struct.HashSHA512, SignatureECDSA)
                                 , (Struct.HashSHA384, SignatureRSA)
                                 , (Struct.HashSHA384, SignatureECDSA)

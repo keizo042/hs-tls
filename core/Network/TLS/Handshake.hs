@@ -16,6 +16,7 @@ module Network.TLS.Handshake
 
 import Network.TLS.Context.Internal
 import Network.TLS.Struct
+import Network.TLS.Struct13
 import Network.TLS.IO
 import Network.TLS.Util (catchException)
 
@@ -41,6 +42,10 @@ handshakeWith ctx hs =
 handleException :: Context -> IO () -> IO ()
 handleException ctx f = catchException f $ \exception -> do
     let tlserror = maybe (Error_Misc $ show exception) id $ fromException exception
-    setEstablished ctx False
-    sendPacket ctx (errorToAlert tlserror)
+    setEstablished ctx NotEstablished
+    tls13 <- tls13orLater ctx
+    if tls13 then
+        sendPacket13 ctx $ Alert13 $ errorToAlert tlserror
+      else
+        sendPacket ctx $ Alert $ errorToAlert tlserror
     handshakeFailed tlserror

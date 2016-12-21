@@ -52,13 +52,14 @@ runTLS debug ioDebug params cSock f = do
             | otherwise = logging
 
 sessionRef ref = SessionManager
-    { sessionEstablish  = \sid sdata -> writeIORef ref (sid,sdata)
-    , sessionResume     = \sid       -> readIORef ref >>= \(s,d) -> if s == sid then return (Just d) else return Nothing
-    , sessionInvalidate = \_         -> return ()
+    { sessionEstablish      = \sid sdata -> writeIORef ref (sid,sdata)
+    , sessionResume         = \sid       -> readIORef ref >>= \(s,d) -> if s == sid then return (Just d) else return Nothing
+    , sessionResumeOnlyOnce = \sid       -> readIORef ref >>= \(s,d) -> if s == sid then return (Just d) else return Nothing
+    , sessionInvalidate     = \_         -> return ()
     }
 
-getDefaultParams :: [Flag] -> CertificateStore -> IORef (SessionID, SessionData) -> Credential -> IO ServerParams
-getDefaultParams flags store sStorage cred = do
+getDefaultParams :: [Flag] -> CertificateStore -> IORef (SessionID, SessionData) -> Credential -> Bool -> IO ServerParams
+getDefaultParams flags store sStorage cred rtt0accept = do
     dhParams <- case getDHParams flags of
         Nothing   -> return Nothing
         Just name -> readDHParams name
@@ -75,12 +76,14 @@ getDefaultParams flags store sStorage cred = do
         , serverHooks = def
         , serverSupported = def { supportedVersions = supportedVers
                                 , supportedCiphers = myCiphers
+                                , supportedGroups = [X25519, P256]
                                 , supportedClientInitiatedRenegotiation = allowRenegotiation }
         , serverDebug = def { debugSeed      = foldl getDebugSeed Nothing flags
                             , debugPrintSeed = if DebugPrintSeed `elem` flags
                                                     then (\seed -> putStrLn ("seed: " ++ show (seedToInteger seed)))
                                                     else (\_ -> return ())
                             }
+        , serverAccept0RTT = rtt0accept
         }
     where
             validateCache
@@ -120,11 +123,11 @@ getDefaultParams flags store sStorage cred = do
                 | Tls11 `elem` flags = TLS11
                 | Ssl3  `elem` flags = SSL3
                 | Tls10 `elem` flags = TLS10
-                | otherwise          = TLS12
+                | otherwise          = TLS13ID18
             supportedVers
                 | NoVersionDowngrade `elem` flags = [tlsConnectVer]
                 | otherwise = filter (<= tlsConnectVer) allVers
-            allVers = [SSL3, TLS10, TLS11, TLS12]
+            allVers = [SSL3, TLS10, TLS11, TLS12, TLS13ID18]
             validateCert = not (NoValidateCert `elem` flags)
             allowRenegotiation = AllowRenegotiation `elem` flags
 
@@ -144,6 +147,7 @@ data Flag = Verbose | Debug | IODebug | NoValidateCert | Session | Http11
           | Certificate String
           | Key String
           | DHParams String
+          | Rtt0
           | DebugSeed String
           | DebugPrintSeed
           | Help
@@ -155,6 +159,7 @@ options =
     , Option ['d']  ["debug"]   (NoArg Debug) "TLS debug output on stdout"
     , Option []     ["io-debug"] (NoArg IODebug) "TLS IO debug output on stdout"
     , Option ['s']  ["session"] (NoArg Session) "try to resume a session"
+    , Option ['Z']  ["zerortt"] (NoArg Rtt0) "accept TLS 1.3 0RTT data"
     , Option ['O']  ["output"]  (ReqArg Output "stdout") "output "
     , Option ['t']  ["timeout"] (ReqArg Timeout "timeout") "timeout in milliseconds (2s by default)"
     , Option []     ["no-validation"] (NoArg NoValidateCert) "disable certificate validation"
@@ -210,7 +215,7 @@ runOn (sStorage, certStore) flags port = do
             (cSock, cAddr) <- accept sock
             putStrLn ("connection from " ++ show cAddr)
             cred <- loadCred getKey getCertificate
-            params <- getDefaultParams flags certStore sStorage cred
+            params <- getDefaultParams flags certStore sStorage cred False
             runTLS False False params cSock $ \ctx -> do
                 handshake ctx
                 if isSend
@@ -238,7 +243,8 @@ runOn (sStorage, certStore) flags port = do
             out <- maybe (return stdout) (flip openFile AppendMode) getOutput
 
             cred <- loadCred getKey getCertificate
-            params <- getDefaultParams flags certStore sStorage cred
+            let rtt0accept = Rtt0 `elem` flags
+            params <- getDefaultParams flags certStore sStorage cred rtt0accept
 
             runTLS (Debug `elem` flags)
                    (IODebug `elem` flags)

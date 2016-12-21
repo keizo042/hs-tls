@@ -57,6 +57,11 @@ module Network.TLS.Packet
     -- * for extensions parsing
     , getSignatureHashAlgorithm
     , putSignatureHashAlgorithm
+    , getVersion'
+    , putVersion'
+    , putServerRandom32
+    , putExtension
+    , getExtensions
     ) where
 
 import Network.TLS.Imports
@@ -93,8 +98,14 @@ getVersion = do
         Nothing -> fail ("invalid version : " ++ show major ++ "," ++ show minor)
         Just v  -> return v
 
-putVersion :: Version -> Put
-putVersion ver = putWord8 major >> putWord8 minor
+getVersion' :: Get (Maybe Version)
+getVersion' = do
+    major <- getWord8
+    minor <- getWord8
+    return $ verOfNum (major, minor)
+
+putVersion' :: Version -> Put
+putVersion' ver = putWord8 major >> putWord8 minor
   where (major, minor) = numericalVer ver
 
 getHeaderType :: Get ProtocolType
@@ -131,7 +142,7 @@ decodeDeprecatedHeader size =
         return $ Header ProtocolType_DeprecatedHandshake version size
 
 encodeHeader :: Header -> ByteString
-encodeHeader (Header pt ver len) = runPut (putHeaderType pt >> putVersion ver >> putWord16 len)
+encodeHeader (Header pt ver len) = runPut (putHeaderType pt >> putVersion' ver >> putWord16 len)
         {- FIXME check len <= 2^14 -}
 
 encodeHeaderNoVer :: Header -> ByteString
@@ -181,6 +192,7 @@ decodeHandshake cp ty = runGetErr ("handshake[" ++ show ty ++ "]") $ case ty of
     HandshakeType_CertVerify      -> decodeCertVerify cp
     HandshakeType_ClientKeyXchg   -> decodeClientKeyXchg cp
     HandshakeType_Finished        -> decodeFinished
+    HandshakeType_HelloRetryRequest -> decodeHelloRetryRequest
 
 decodeDeprecatedHandshake :: ByteString -> Either TLSError Handshake
 decodeDeprecatedHandshake b = runGetErr "deprecatedhandshake" getDeprecated b
@@ -224,14 +236,19 @@ decodeServerHello :: Get Handshake
 decodeServerHello = do
     ver           <- getVersion
     random        <- getServerRandom32
-    session       <- getSession
-    cipherid      <- getWord16
-    compressionid <- getWord8
-    r             <- remaining
-    exts <- if hasHelloExtensions ver && r > 0
-            then fmap fromIntegral getWord16 >>= getExtensions
-            else return []
-    return $ ServerHello ver random session cipherid compressionid exts
+    if ver <= TLS12 then do
+        session       <- getSession
+        cipherid      <- getWord16
+        compressionid <- getWord8
+        r             <- remaining
+        exts <- if hasHelloExtensions ver && r > 0
+                then fmap fromIntegral getWord16 >>= getExtensions
+                else return []
+        return $ ServerHello ver random session cipherid compressionid exts
+      else do
+        cipherid      <- getWord16
+        exts <- fmap fromIntegral getWord16 >>= getExtensions
+        return $ ServerHello' ver random cipherid exts
 
 decodeServerHelloDone :: Get Handshake
 decodeServerHelloDone = return ServerHelloDone
@@ -331,6 +348,12 @@ decodeServerKeyXchg cp =
         Just cke -> ServerKeyXchg <$> decodeServerKeyXchgAlgorithmData (cParamsVersion cp) cke
         Nothing  -> ServerKeyXchg . SKX_Unparsed <$> (remaining >>= getBytes)
 
+decodeHelloRetryRequest :: Get Handshake
+decodeHelloRetryRequest = do
+    ver <- getVersion
+    exts <- (fromIntegral <$> getWord16) >>= getExtensions
+    return $ HelloRetryRequest ver exts
+
 encodeHandshake :: Handshake -> ByteString
 encodeHandshake o =
     let content = runPut $ encodeHandshakeContent o in
@@ -351,7 +374,7 @@ encodeHandshakeContent :: Handshake -> Put
 encodeHandshakeContent (ClientHello _ _ _ _ _ _ (Just deprecated)) = do
     putBytes deprecated
 encodeHandshakeContent (ClientHello version random session cipherIDs compressionIDs exts Nothing) = do
-    putVersion version
+    putVersion' version
     putClientRandom32 random
     putSession session
     putWords16 cipherIDs
@@ -360,9 +383,9 @@ encodeHandshakeContent (ClientHello version random session cipherIDs compression
     return ()
 
 encodeHandshakeContent (ServerHello version random session cipherid compressionID exts) =
-    putVersion version >> putServerRandom32 random >> putSession session
-                       >> putWord16 cipherid >> putWord8 compressionID
-                       >> putExtensions exts >> return ()
+    putVersion' version >> putServerRandom32 random >> putSession session
+                        >> putWord16 cipherid >> putWord8 compressionID
+                        >> putExtensions exts >> return ()
 
 encodeHandshakeContent (Certificates cc) = putOpaque24 (runPut $ mapM_ putOpaque24 certs)
   where (CertificateChainRaw certs) = encodeCertificateChain cc
@@ -406,6 +429,15 @@ encodeHandshakeContent (CertRequest certTypes sigAlgs certAuthorities) = do
 encodeHandshakeContent (CertVerify digitallySigned) = putDigitallySigned digitallySigned
 
 encodeHandshakeContent (Finished opaque) = putBytes opaque
+
+encodeHandshakeContent (ServerHello' ver random cipherId exts) = do
+    putVersion' ver
+    putServerRandom32 random
+    putWord16 cipherId
+    putExtensions exts -- fixme
+encodeHandshakeContent (HelloRetryRequest ver exts) = do
+    putVersion' ver
+    putExtensions exts -- fixme
 
 {- FIXME make sure it return error if not 32 available -}
 getRandom32 :: Get ByteString
@@ -469,6 +501,7 @@ getServerDHParams = ServerDHParams <$> getBigNum16 <*> getBigNum16 <*> getBigNum
 putServerDHParams :: ServerDHParams -> Put
 putServerDHParams (ServerDHParams p g y) = mapM_ putBigNum16 [p,g,y]
 
+-- RFC 4492 Section 5.4 Server Key Exchange
 getServerECDHParams :: Get ServerECDHParams
 getServerECDHParams = do
     curveType <- getWord8
@@ -485,6 +518,7 @@ getServerECDHParams = do
         _ ->
             error "getServerECDHParams: unknown type for ECDH Params"
 
+-- RFC 4492 Section 5.4 Server Key Exchange
 putServerECDHParams :: ServerECDHParams -> Put
 putServerECDHParams (ServerECDHParams grp grppub) = do
     putWord8 3                            -- ECParameters ECCurveType
@@ -519,7 +553,7 @@ decodePreMasterSecret = runGetErr "pre-master-secret" $ do
     liftM2 (,) getVersion (getBytes 46)
 
 encodePreMasterSecret :: Version -> ByteString -> ByteString
-encodePreMasterSecret version bytes = runPut (putVersion version >> putBytes bytes)
+encodePreMasterSecret version bytes = runPut (putVersion' version >> putBytes bytes)
 
 -- | in certain cases, we haven't manage to decode ServerKeyExchange properly,
 -- because the decoding was too eager and the cipher wasn't been set yet.

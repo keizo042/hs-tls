@@ -14,6 +14,7 @@ module Network.TLS.Handshake.Common
     , recvPacketHandshake
     , onRecvStateHandshake
     , extensionLookup
+    , getSessionData
     ) where
 
 import Control.Concurrent.MVar
@@ -31,6 +32,7 @@ import Network.TLS.Record.State
 import Network.TLS.Measurement
 import Network.TLS.Types
 import Network.TLS.Cipher
+import Network.TLS.Crypto.Types (Group)
 import Network.TLS.Util
 import Data.List (find)
 import Data.ByteString.Char8 (ByteString)
@@ -41,9 +43,9 @@ import Control.Exception (throwIO)
 handshakeFailed :: TLSError -> IO ()
 handshakeFailed err = throwIO $ HandshakeFailed err
 
-errorToAlert :: TLSError -> Packet
-errorToAlert (Error_Protocol (_, _, ad)) = Alert [(AlertLevel_Fatal, ad)]
-errorToAlert _                           = Alert [(AlertLevel_Fatal, InternalError)]
+errorToAlert :: TLSError -> [(AlertLevel, AlertDescription)]
+errorToAlert (Error_Protocol (_, _, ad)) = [(AlertLevel_Fatal, ad)]
+errorToAlert _                           = [(AlertLevel_Fatal, InternalError)]
 
 unexpected :: String -> Maybe [Char] -> IO a
 unexpected msg expected = throwCore $ Error_Packet_unexpected msg (maybe "" (" expected: " ++) expected)
@@ -60,7 +62,7 @@ handshakeTerminate ctx = do
     -- only callback the session established if we have a session
     case session of
         Session (Just sessionId) -> do
-            sessionData <- getSessionData ctx
+            sessionData <- getSessionData ctx Nothing Nothing
             liftIO $ sessionEstablish (sharedSessionManager $ ctxShared ctx) sessionId (fromJust "session-data" sessionData)
         _ -> return ()
     -- forget most handshake data and reset bytes counters.
@@ -74,7 +76,7 @@ handshakeTerminate ctx = do
                     }
     updateMeasure ctx resetBytesCounters
     -- mark the secure connection up and running.
-    setEstablished ctx True
+    setEstablished ctx Established
     return ()
 
 sendChangeCipherAndFinish :: Context
@@ -121,8 +123,8 @@ runRecvState _   (RecvStateDone)   = return ()
 runRecvState ctx (RecvStateNext f) = recvPacket ctx >>= either throwCore f >>= runRecvState ctx
 runRecvState ctx iniState          = recvPacketHandshake ctx >>= onRecvStateHandshake ctx iniState >>= runRecvState ctx
 
-getSessionData :: Context -> IO (Maybe SessionData)
-getSessionData ctx = do
+getSessionData :: Context -> Maybe Group -> Maybe TLS13TicketInfo -> IO (Maybe SessionData)
+getSessionData ctx mgroup mlife = do
     ver <- usingState_ ctx getVersion
     sni <- usingState_ ctx getClientSNI
     mms <- usingHState ctx (gets hstMasterSecret)
@@ -134,7 +136,9 @@ getSessionData ctx = do
                         , sessionCipher      = cipherID $ fromJust "cipher" $ stCipher tx
                         , sessionCompression = compressionID $ stCompression tx
                         , sessionClientSNI   = sni
-                        , sessionSecret      = ms
+                        , sessionSecret     = ms
+                        , sessionGroup      = mgroup
+                        , sessionTicketInfo = mlife
                         }
 
 extensionLookup :: ExtensionID -> [ExtensionRaw] -> Maybe ByteString

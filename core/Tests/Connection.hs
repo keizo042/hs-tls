@@ -49,7 +49,7 @@ knownCiphers = filter nonTLS13 $ filter nonECDSA (ciphersuite_all ++ ciphersuite
       ]
     -- arbitraryCredentialsOfEachType cannot generate ECDSA
     nonECDSA c = not ("ECDSA" `isInfixOf` cipherName c)
-    nonTLS13 c = cipherMinVer c /= Just TLS13ID18
+    nonTLS13 c = cipherMinVer c /= Just TLS13ID19
 
 knownCiphers13 :: [Cipher]
 knownCiphers13 = [
@@ -130,7 +130,7 @@ arbitraryPairParams = do
 
 arbitraryPairParams13 :: Gen (ClientParams, ServerParams)
 arbitraryPairParams13 = do
-    let connectVersion = TLS13ID18
+    let connectVersion = TLS13ID19
         allowedVersions = [connectVersion]
         serAllowedVersions = [connectVersion]
     (clientCiphers', serverCiphers') <- arbitraryCipherPair connectVersion

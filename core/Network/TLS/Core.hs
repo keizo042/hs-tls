@@ -126,17 +126,17 @@ recvData13 ctx = liftIO $ do
     checkValid ctx
     pkt <- withReadLock ctx $ recvPacket13 ctx
     either (onError terminate) process pkt
-  where process (Alert13 [(_,EndOfEarlyData)]) = do
-            alertAction <- popPendingAction ctx
-            alertAction "dummy"
-            recvData13 ctx
-        process (Alert13 [(AlertLevel_Warning, CloseNotify)]) = tryBye ctx >> setEOF ctx >> return B.empty
+  where process (Alert13 [(AlertLevel_Warning, CloseNotify)]) = tryBye ctx >> setEOF ctx >> return B.empty
         process (Alert13 [(AlertLevel_Fatal, desc)]) = do
             setEOF ctx
             E.throwIO (Terminated True ("received fatal error: " ++ show desc) (Error_Protocol ("remote side fatal error", True, desc)))
         process (Handshake13 [ClientHello13 _ _ _ _]) = do
             let reason = "Client hello is not allowed"
             terminate (Error_Misc reason) AlertLevel_Fatal UnexpectedMessage reason
+        process (Handshake13 [EndOfEarlyData13]) = do
+            alertAction <- popPendingAction ctx
+            alertAction "dummy"
+            recvData13 ctx
         process (Handshake13 [Finished13 verifyData']) = do
             finishedAction <- popPendingAction ctx
             finishedAction verifyData'
@@ -152,6 +152,9 @@ recvData13 ctx = liftIO $ do
         process (AppData13 "") = recvData13 ctx
         process (AppData13 x) = do
             established <- ctxEstablished ctx
+            when (established == EarlyDataAllowed) $ do
+                putStrLn "---- EARLY DATA ----"
+                B.putStrLn x
             if established == EarlyDataNotAllowed then
                 recvData13 ctx
               else

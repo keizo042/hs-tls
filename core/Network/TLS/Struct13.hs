@@ -19,7 +19,8 @@ data Handshake13 =
       ClientHello13 !Version !ClientRandom ![CipherID] [ExtensionRaw]
     | ServerHello13 !Version !ServerRandom !CipherID [ExtensionRaw]
     | NewSessionTicket13 Word32 Word32 ByteString [ExtensionRaw] -- fixme
-    | HelloRetryRequest13 !Version [ExtensionRaw]
+    | HelloRetryRequest13 !Version CipherID [ExtensionRaw]
+    | EndOfEarlyData13
     | EncryptedExtensions13 [ExtensionRaw]
     | CertRequest13 -- fixme
     | Certificate13 ByteString CertificateChain [[ExtensionRaw]]
@@ -31,6 +32,7 @@ data Handshake13 =
 data HandshakeType13 =
       HandshakeType_ClientHello13
     | HandshakeType_ServerHello13
+    | HandshakeType_EndOfEarlyData13
     | HandshakeType_NewSessionTicket13
     | HandshakeType_HelloRetryRequest13
     | HandshakeType_EncryptedExtensions13
@@ -44,6 +46,7 @@ data HandshakeType13 =
 typeOfHandshake13 :: Handshake13 -> HandshakeType13
 typeOfHandshake13 (ClientHello13 {})         = HandshakeType_ClientHello13
 typeOfHandshake13 (ServerHello13 {})         = HandshakeType_ServerHello13
+typeOfHandshake13 (EndOfEarlyData13 {})      = HandshakeType_EndOfEarlyData13
 typeOfHandshake13 (NewSessionTicket13 {})    = HandshakeType_NewSessionTicket13
 typeOfHandshake13 (HelloRetryRequest13 {})   = HandshakeType_HelloRetryRequest13
 typeOfHandshake13 (EncryptedExtensions13 {}) = HandshakeType_EncryptedExtensions13
@@ -57,6 +60,7 @@ instance TypeValuable HandshakeType13 where
   valOfType HandshakeType_ClientHello13         = 1
   valOfType HandshakeType_ServerHello13         = 2
   valOfType HandshakeType_NewSessionTicket13    = 4
+  valOfType HandshakeType_EndOfEarlyData13      = 5
   valOfType HandshakeType_HelloRetryRequest13   = 6
   valOfType HandshakeType_EncryptedExtensions13 = 8
   valOfType HandshakeType_CertRequest13         = 13
@@ -68,6 +72,7 @@ instance TypeValuable HandshakeType13 where
   valToType 1  = Just HandshakeType_ClientHello13
   valToType 2  = Just HandshakeType_ServerHello13
   valToType 4  = Just HandshakeType_NewSessionTicket13
+  valToType 5  = Just HandshakeType_EndOfEarlyData13
   valToType 6  = Just HandshakeType_HelloRetryRequest13
   valToType 8  = Just HandshakeType_EncryptedExtensions13
   valToType 13 = Just HandshakeType_CertRequest13

@@ -30,7 +30,7 @@ import Data.Time
 
 makeFinished :: Context -> Hash -> ByteString -> IO Handshake13
 makeFinished ctx usedHash baseKey = do
-    transcript <- getHandshakeContextHash ctx
+    transcript <- transcriptHash ctx
     return $ Finished13 $ makeVerifyData usedHash baseKey transcript
 
 makeVerifyData :: Hash -> ByteString -> ByteString -> ByteString
@@ -119,7 +119,7 @@ sign ctx hs privKey target = usingState_ ctx $ do
 
 makePSKBinder :: Context -> ByteString -> Hash -> Int -> Maybe ByteString -> IO ByteString
 makePSKBinder ctx earlySecret usedHash truncLen mch = do
-    rmsgs0 <- usingHState ctx getHandshakeMessagesRev
+    rmsgs0 <- usingHState ctx getHandshakeMessagesRev -- XXX
     let rmsgs = case mch of
           Just ch -> trunc ch : rmsgs0
           Nothing -> trunc (head rmsgs0) : tail rmsgs0

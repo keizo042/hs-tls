@@ -128,6 +128,9 @@ module Network.TLS
 
     -- * Key exchange group
     , Group(..)
+
+    -- * Key exporter
+    , exporter
     ) where
 
 import Network.TLS.Backend (Backend(..), HasBackend(..))

@@ -46,6 +46,8 @@ module Network.TLS.State
     , getSession
     , isSessionResuming
     , isClientContext
+    , setExporterMasterSecret
+    , getExporterMasterSecret
     -- * random
     , genRandom
     , withRNG
@@ -85,6 +87,7 @@ data TLSState = TLSState
     , stRandomGen           :: StateRNG
     , stVersion             :: Maybe Version
     , stClientContext       :: Role
+    , stExporterMasterSecret :: Maybe ByteString -- TLS 1.3
     }
 
 newtype TLSSt a = TLSSt { runTLSSt :: ErrT TLSError (State TLSState) a }
@@ -119,6 +122,7 @@ newTLSState rng clientContext = TLSState
     , stRandomGen           = rng
     , stVersion             = Nothing
     , stClientContext       = clientContext
+    , stExporterMasterSecret = Nothing
     }
 
 updateVerifiedData :: Role -> ByteString -> TLSSt ()
@@ -242,3 +246,9 @@ withRNG f = do
     let (a,rng') = withTLSRNG (stRandomGen st) f
     put (st { stRandomGen = rng' })
     return a
+
+setExporterMasterSecret :: ByteString -> TLSSt ()
+setExporterMasterSecret key = modify (\st -> st { stExporterMasterSecret = Just key })
+
+getExporterMasterSecret :: TLSSt (Maybe ByteString)
+getExporterMasterSecret = gets stExporterMasterSecret
